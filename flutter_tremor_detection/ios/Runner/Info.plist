@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app needs Bluetooth to connect to your tremor detection device</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>This app needs Bluetooth to connect to your tremor detection device</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs location to scan for Bluetooth devices</string>
 </dict>
 </plist>
