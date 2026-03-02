@@ -72,5 +72,13 @@
 	<string>This app needs Bluetooth to connect to your tremor detection device</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app needs location to scan for Bluetooth devices</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

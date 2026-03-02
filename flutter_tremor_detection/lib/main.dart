@@ -6,6 +6,9 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
 import 'database_helper.dart';
+import 'tremor_detector.dart';
+import 'tremor_event.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 void main() {
   runApp(const TremorDetectionApp());
@@ -226,6 +229,14 @@ class DataDisplayScreen extends StatefulWidget {
 }
 
 class _DataDisplayScreenState extends State<DataDisplayScreen> {
+  final TremorDetector tremorDetector = TremorDetector();
+  bool currentlyInTremor = false;
+  DateTime? tremorStartTime;
+  TremorAnalysis? lastAnalysis;
+  
+
+  final FlutterLocalNotificationsPlugin notificationsPlugin = 
+      FlutterLocalNotificationsPlugin();
   bool isConnected = false;
   bool isConnecting = true;
   double xValue = 0;
@@ -244,14 +255,60 @@ class _DataDisplayScreenState extends State<DataDisplayScreen> {
   
   List<AccelerometerReading> recentReadings = [];
   final int maxDisplayPoints = 50;
-
-  @override
+@override
   void initState() {
     super.initState();
     connectToDevice();
     loadRecentReadings();
+    initializeNotifications(); // Add this line
   }
 
+  void initializeNotifications() async {
+  const initializationSettingsAndroid = 
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const initializationSettingsIOS = DarwinInitializationSettings(
+    requestAlertPermission: true,
+    requestBadgePermission: true,
+    requestSoundPermission: true,
+  );
+  const initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    iOS: initializationSettingsIOS,
+  );
+  
+  await notificationsPlugin.initialize(initializationSettings);
+  
+  // Request permissions
+  await notificationsPlugin
+      .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+      ?.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+  
+  print('✅ Notifications initialized and permissions requested');
+  
+  // ADD THIS TEST NOTIFICATION:
+  await Future.delayed(Duration(seconds: 2));
+  
+  const testDetails = NotificationDetails(
+    iOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    ),
+  );
+  
+  await notificationsPlugin.show(
+    999,
+    'TEST',
+    'If you see this, notifications work!',
+    testDetails,
+  );
+  
+  print('🧪 Test notification sent');
+}
   void loadRecentReadings() async {
     final readings = await DatabaseHelper.instance.getRecentReadings(10);
     setState(() {
@@ -305,8 +362,35 @@ class _DataDisplayScreenState extends State<DataDisplayScreen> {
       });
     }
   }
-
-  void parseData(String data) async {
+   Future<void> showTremorNotification(TremorAnalysis analysis) async {
+    const androidDetails = AndroidNotificationDetails(
+      'tremor_channel',
+      'Tremor Alerts',
+      channelDescription: 'Notifications for detected tremors',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await notificationsPlugin.show(
+      0,
+      '⚠️ Tremor Detected',
+      '${analysis.severity} tremor at ${analysis.dominantFrequency.toStringAsFixed(1)} Hz',
+      notificationDetails,
+    );
+  }
+  
+void parseData(String data) async {
     try {
       List<String> values = data.trim().split(',');
       if (values.length >= 3) {
@@ -315,6 +399,52 @@ class _DataDisplayScreenState extends State<DataDisplayScreen> {
         double z = double.tryParse(values[2].trim()) ?? 0;
         
         double mag = sqrt(x * x + y * y + z * z);
+        
+        // Add to tremor detector
+        tremorDetector.addDataPoint(x, y, z);
+        
+        // Analyze for tremor
+       // Analyze for tremor
+TremorAnalysis? analysis = tremorDetector.analyzeWindow();
+
+// ADD THESE DEBUG LINES:
+print('Analysis: isTremor=${analysis?.isTremor}, freq=${analysis?.dominantFrequency}, power=${analysis?.power}');
+
+if (analysis != null) {
+  lastAnalysis = analysis;
+          
+          // Check if tremor detected
+         if (analysis.isTremor && !currentlyInTremor) {
+  // Tremor just started
+  print('🔔 TREMOR STARTED - Sending notification!'); // ADD THIS
+  currentlyInTremor = true;
+  tremorStartTime = DateTime.now();
+  
+  // Send notification
+  await showTremorNotification(analysis);
+  print('🔔 Notification sent!'); // ADD THIS
+} else if (!analysis.isTremor && currentlyInTremor) {
+            // Tremor ended
+            currentlyInTremor = false;
+            
+            if (tremorStartTime != null) {
+              double duration = DateTime.now().difference(tremorStartTime!).inSeconds.toDouble();
+              
+              // Save tremor event
+              final event = TremorEvent(
+                timestamp: tremorStartTime!,
+                magnitude: lastAnalysis!.power,
+                duration: duration,
+                severity: lastAnalysis!.severity,
+              );
+              
+              await DatabaseHelper.instance.insertTremorEvent(event);
+            }
+            
+            tremorStartTime = null;
+          }
+        }
+       
         
         setState(() {
           xValue = x;
@@ -335,6 +465,7 @@ class _DataDisplayScreenState extends State<DataDisplayScreen> {
           }
         });
         
+       
         final reading = AccelerometerReading(
           x: x,
           y: y,
@@ -347,7 +478,7 @@ class _DataDisplayScreenState extends State<DataDisplayScreen> {
         loadRecentReadings();
       }
     } catch (e) {
-      // Silent catch for parse errors
+     
     }
   }
 
@@ -388,6 +519,42 @@ class _DataDisplayScreenState extends State<DataDisplayScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+               if (currentlyInTremor)
+          Container(
+            padding: EdgeInsets.all(16),
+            margin: EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.red.shade100,
+              border: Border.all(color: Colors.red, width: 3),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning, color: Colors.red, size: 40),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '⚠️ TREMOR DETECTED',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red.shade900,
+                        ),
+                      ),
+                      if (lastAnalysis != null)
+                        Text(
+                          '${lastAnalysis!.severity} tremor at ${lastAnalysis!.dominantFrequency.toStringAsFixed(1)} Hz',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),

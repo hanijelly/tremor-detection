@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'tremor_event.dart';
 
 class AccelerometerReading {
   final int? id;
@@ -65,6 +66,7 @@ class DatabaseHelper {
   }
 
   Future _createDB(Database db, int version) async {
+    // Existing readings table
     await db.execute('''
       CREATE TABLE readings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +75,17 @@ class DatabaseHelper {
         z REAL NOT NULL,
         timestamp TEXT NOT NULL,
         magnitude REAL NOT NULL
+      )
+    ''');
+    
+    // New tremor events table
+    await db.execute('''
+      CREATE TABLE tremor_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        magnitude REAL NOT NULL,
+        duration REAL NOT NULL,
+        severity TEXT NOT NULL
       )
     ''');
   }
@@ -118,6 +131,24 @@ class DatabaseHelper {
   Future<int> deleteAllReadings() async {
     final db = await database;
     return await db.delete('readings');
+  }
+  Future<int> insertTremorEvent(TremorEvent event) async {
+    final db = await database;
+    return await db.insert('tremor_events', event.toMap());
+  }
+
+  Future<List<TremorEvent>> getAllTremorEvents() async {
+    final db = await database;
+    final result = await db.query(
+      'tremor_events',
+      orderBy: 'timestamp DESC',
+    );
+    return result.map((map) => TremorEvent.fromMap(map)).toList();
+  }
+
+  Future<int> deleteAllTremorEvents() async {
+    final db = await database;
+    return await db.delete('tremor_events');
   }
 
   Future close() async {
