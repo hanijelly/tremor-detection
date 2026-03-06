@@ -9,6 +9,7 @@ import 'database_helper.dart';
 import 'tremor_detector.dart';
 import 'tremor_event.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'ml_detector.dart';
 
 void main() {
   runApp(const TremorDetectionApp());
@@ -231,6 +232,9 @@ class DataDisplayScreen extends StatefulWidget {
 class _DataDisplayScreenState extends State<DataDisplayScreen> {
   final TremorDetector tremorDetector = TremorDetector();
   bool currentlyInTremor = false;
+  final MLDetector mlDetector = MLDetector();
+List<double> mlWindow = [];
+bool mlTremorDetected = false;
   DateTime? tremorStartTime;
   TremorAnalysis? lastAnalysis;
   
@@ -400,37 +404,51 @@ void parseData(String data) async {
         
         double mag = sqrt(x * x + y * y + z * z);
         
-        // Add to tremor detector
+        
         tremorDetector.addDataPoint(x, y, z);
         
-        // Analyze for tremor
-       // Analyze for tremor
+       
 TremorAnalysis? analysis = tremorDetector.analyzeWindow();
 
-// ADD THESE DEBUG LINES:
+mlWindow.add(mag);
+if (mlWindow.length > 50) {
+  mlWindow.removeAt(0);
+}
+
+if (mlWindow.length >= 20) {
+  bool mlPrediction = mlDetector.detectTremor(mlWindow);
+  double power = mlDetector.calcPower(mlWindow);
+  
+  setState(() {
+    mlTremorDetected = mlPrediction;
+  });
+  
+  print('ML: ${mlPrediction ? "TREMOR" : "NORMAL"}, Power: ${power.toStringAsFixed(4)}');
+}
+
 print('Analysis: isTremor=${analysis?.isTremor}, freq=${analysis?.dominantFrequency}, power=${analysis?.power}');
 
 if (analysis != null) {
   lastAnalysis = analysis;
           
-          // Check if tremor detected
+       
          if (analysis.isTremor && !currentlyInTremor) {
-  // Tremor just started
-  print('🔔 TREMOR STARTED - Sending notification!'); // ADD THIS
+
+  print('🔔 TREMOR STARTED - Sending notification!'); 
   currentlyInTremor = true;
   tremorStartTime = DateTime.now();
   
-  // Send notification
+  
   await showTremorNotification(analysis);
-  print('🔔 Notification sent!'); // ADD THIS
+  print('🔔 Notification sent!'); 
 } else if (!analysis.isTremor && currentlyInTremor) {
-            // Tremor ended
+          
             currentlyInTremor = false;
             
             if (tremorStartTime != null) {
               double duration = DateTime.now().difference(tremorStartTime!).inSeconds.toDouble();
               
-              // Save tremor event
+      
               final event = TremorEvent(
                 timestamp: tremorStartTime!,
                 magnitude: lastAnalysis!.power,
@@ -555,6 +573,32 @@ if (analysis != null) {
               ],
             ),
           ),
+          
+Container(
+  padding: EdgeInsets.all(8),
+  margin: EdgeInsets.only(bottom: 8),
+  decoration: BoxDecoration(
+    color: mlTremorDetected ? Colors.orange.shade100 : Colors.green.shade100,
+    border: Border.all(
+      color: mlTremorDetected ? Colors.orange : Colors.green,
+      width: 2,
+    ),
+    borderRadius: BorderRadius.circular(8),
+  ),
+  child: Row(
+    children: [
+      Icon(
+        mlTremorDetected ? Icons.warning_amber : Icons.check_circle,
+        color: mlTremorDetected ? Colors.orange : Colors.green,
+      ),
+      SizedBox(width: 8),
+      Text(
+        'ML Model: ${mlTremorDetected ? "Tremor Detected" : "Normal"}',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+    ],
+  ),
+),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -711,6 +755,7 @@ class DataColumn extends StatelessWidget {
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
+  
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -719,6 +764,7 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen> {
   List<AccelerometerReading> allReadings = [];
   bool isLoading = true;
+  
 
   @override
   void initState() {
@@ -733,6 +779,35 @@ class _HistoryScreenState extends State<HistoryScreen> {
       isLoading = false;
     });
   }
+  Future<void> exportToCSV() async {
+    final readings = await DatabaseHelper.instance.getAllReadings();
+    
+    // Create CSV content
+    StringBuffer csv = StringBuffer();
+    csv.writeln('timestamp,x,y,z,magnitude');
+    
+    for (var reading in readings) {
+      csv.writeln(
+        '${reading.timestamp.toIso8601String()},'
+        '${reading.x},'
+        '${reading.y},'
+        '${reading.z},'
+        '${reading.magnitude}'
+      );
+    }
+    
+    // Print to console
+    print('=== CSV DATA START ===');
+    print(csv.toString());
+    print('=== CSV DATA END ===');
+    print('Total readings: ${readings.length}');
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported ${readings.length} readings to console')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -740,6 +815,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
       appBar: AppBar(
         title: const Text('Reading History'),
         actions: [
+          IconButton(                        // ← NEW - Add this
+    icon: const Icon(Icons.download),
+    onPressed: exportToCSV, 
+  ),
           IconButton(
             icon: const Icon(Icons.delete_forever),
             onPressed: () async {
