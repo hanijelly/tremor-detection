@@ -12,6 +12,1270 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'settings_screen.dart';
 import 'tremor_history_screen.dart';
+import 'ml_detector.dart';
+
+void main() {
+  runApp(const TremorDetectionApp());
+}
+
+class TremorDetectionApp extends StatelessWidget {
+  const TremorDetectionApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'TremorTrail',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.light,
+        ),
+      ),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+// Splash Screen with First-Time Tutorial
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    checkFirstTime();
+  }
+  
+  void checkFirstTime() async {
+    await Future.delayed(const Duration(seconds: 2));
+    
+    final prefs = await SharedPreferences.getInstance();
+    bool isFirstTime = prefs.getBool('first_time') ?? true;
+    
+    if (!mounted) return;
+    
+    if (isFirstTime) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const WelcomeScreen()),
+      );
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const BluetoothScanScreen()),
+      );
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.health_and_safety,
+              size: 100,
+              color: Theme.of(context).primaryColor,
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'TremorTrail',
+              style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Monitoring your health',
+              style: TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 48),
+            const CircularProgressIndicator(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Single Welcome Screen
+class WelcomeScreen extends StatelessWidget {
+  const WelcomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.watch,
+                size: 120,
+                color: Theme.of(context).primaryColor,
+              ),
+              const SizedBox(height: 48),
+              const Text(
+                'Welcome to TremorTrail!',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Used with our wrist wearable device, this app allows you to monitor your tremors!\n\n'
+                'Using data from your wrist, tremors are identified in real time.\n\n'
+                'This app notifies you when a tremor occurs, shows a log of all tremors that occurred, '
+                'and has other data visualization features!',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 48),
+              ElevatedButton(
+                onPressed: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setBool('first_time', false);
+                  
+                  if (!context.mounted) return;
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const BluetoothScanScreen(),
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 48,
+                    vertical: 16,
+                  ),
+                ),
+                child: const Text(
+                  'Get Started',
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class BluetoothScanScreen extends StatefulWidget {
+  const BluetoothScanScreen({super.key});
+
+  @override
+  State<BluetoothScanScreen> createState() => _BluetoothScanScreenState();
+}
+
+class _BluetoothScanScreenState extends State<BluetoothScanScreen> {
+  List<ScanResult> scanResults = [];
+  bool isScanning = false;
+  String statusMessage = 'Initializing...';
+  StreamSubscription? scanSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    checkBluetoothAndScan();
+  }
+
+  @override
+  void dispose() {
+    scanSubscription?.cancel();
+    super.dispose();
+  }
+
+  void checkBluetoothAndScan() async {
+    try {
+      if (await FlutterBluePlus.isSupported == false) {
+        setState(() {
+          statusMessage = 'Bluetooth not available on this device';
+        });
+        return;
+      }
+
+      var adapterState = await FlutterBluePlus.adapterState.first;
+      if (adapterState != BluetoothAdapterState.on) {
+        setState(() {
+          statusMessage = 'Please turn on Bluetooth';
+        });
+        return;
+      }
+
+      startScan();
+    } catch (e) {
+      setState(() {
+        statusMessage = 'Error: $e';
+      });
+    }
+  }
+
+  void startScan() async {
+    try {
+      setState(() {
+        isScanning = true;
+        scanResults = [];
+        statusMessage = 'Scanning for devices...';
+      });
+
+      await scanSubscription?.cancel();
+
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 5),
+        androidUsesFineLocation: true,
+      );
+
+      scanSubscription = FlutterBluePlus.scanResults.listen((results) {
+        setState(() {
+          scanResults = results;
+        });
+      });
+
+      await Future.delayed(const Duration(seconds: 5));
+      await FlutterBluePlus.stopScan();
+      
+      setState(() {
+        isScanning = false;
+        if (scanResults.isEmpty) {
+          statusMessage = 'No devices found. Make sure your device is powered on.';
+        } else {
+          statusMessage = 'Found ${scanResults.length} device(s)';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        isScanning = false;
+        statusMessage = 'Scan failed: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('TremorTrail'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.timeline),
+            tooltip: 'Tremor History',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const TremorHistoryScreen(),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'All Readings',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const HistoryScreen(),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SettingsScreen(),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: isScanning ? null : startScan,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: isScanning 
+                    ? [Colors.blue.shade100, Colors.blue.shade200]
+                    : [Colors.grey.shade200, Colors.grey.shade300],
+              ),
+            ),
+            child: Row(
+              children: [
+                if (isScanning)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    statusMessage,
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: scanResults.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.bluetooth_searching,
+                          size: 80,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 24),
+                        Text(
+                          isScanning ? 'Scanning for devices...' : 'No devices found',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (!isScanning)
+                          Text(
+                            'Make sure your device is powered on and nearby',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        if (!isScanning) ...[
+                          const SizedBox(height: 32),
+                          ElevatedButton.icon(
+                            onPressed: startScan,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Scan Again'),
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 32,
+                                vertical: 16,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: scanResults.length,
+                    padding: const EdgeInsets.all(8),
+                    itemBuilder: (context, index) {
+                      final result = scanResults[index];
+                      final deviceName = result.device.platformName.isEmpty
+                          ? 'Unknown Device'
+                          : result.device.platformName;
+                      
+                      return Card(
+                        elevation: 2,
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        child: ListTile(
+                          leading: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.bluetooth,
+                              color: Colors.blue,
+                            ),
+                          ),
+                          title: Text(
+                            deviceName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                result.device.remoteId.toString(),
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.signal_cellular_alt,
+                                    size: 14,
+                                    color: _getSignalColor(result.rssi),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${result.rssi} dBm',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: _getSignalColor(result.rssi),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => DataDisplayScreen(
+                                  device: result.device,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Color _getSignalColor(int rssi) {
+    if (rssi > -60) return Colors.green;
+    if (rssi > -80) return Colors.orange;
+    return Colors.red;
+  }
+}
+
+class DataDisplayScreen extends StatefulWidget {
+  final BluetoothDevice device;
+
+  const DataDisplayScreen({super.key, required this.device});
+
+  @override
+  State<DataDisplayScreen> createState() => _DataDisplayScreenState();
+}
+
+class _DataDisplayScreenState extends State<DataDisplayScreen> {
+  final TremorDetector tremorDetector = TremorDetector();
+  final MLDetector mlDetector = MLDetector();
+  List<double> mlWindow = [];
+  bool mlConfirmsTremor = false;
+  
+  bool currentlyInTremor = false;
+  DateTime? tremorStartTime;
+  TremorAnalysis? lastAnalysis;
+  bool alertsEnabled = true;
+  
+  final FlutterLocalNotificationsPlugin notificationsPlugin = 
+      FlutterLocalNotificationsPlugin();
+  bool isConnected = false;
+  bool isConnecting = true;
+  double xValue = 0;
+  double yValue = 0;
+  double zValue = 0;
+  double magnitude = 0;
+  String statusMessage = 'Connecting to device...';
+  BluetoothCharacteristic? targetCharacteristic;
+  StreamSubscription? characteristicSubscription;
+  
+  List<FlSpot> xDataPoints = [];
+  List<FlSpot> yDataPoints = [];
+  List<FlSpot> zDataPoints = [];
+  double timeCounter = 0;
+  
+  List<AccelerometerReading> recentReadings = [];
+  final int maxDisplayPoints = 50;
+  
+  int tremorCountToday = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    connectToDevice();
+    loadRecentReadings();
+    initializeNotifications();
+    loadSettings();
+    loadTodayTremorCount();
+  }
+  
+  void loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      alertsEnabled = prefs.getBool('alerts_enabled') ?? true;
+    });
+    
+    TremorDetector.updateSettings(
+      newThreshold: prefs.getDouble('tremor_threshold') ?? 0.08,
+      newMinFreq: prefs.getDouble('min_frequency') ?? 2.0,
+      newMaxFreq: prefs.getDouble('max_frequency') ?? 15.0,
+    );
+  }
+  
+  void loadTodayTremorCount() async {
+    final events = await DatabaseHelper.instance.getAllTremorEvents();
+    final today = DateTime.now();
+    final todayEvents = events.where((e) {
+      return e.timestamp.year == today.year &&
+             e.timestamp.month == today.month &&
+             e.timestamp.day == today.day;
+    }).toList();
+    
+    setState(() {
+      tremorCountToday = todayEvents.length;
+    });
+  }
+
+  void initializeNotifications() async {
+    const initializationSettingsAndroid = 
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initializationSettingsIOS = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    const initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      iOS: initializationSettingsIOS,
+    );
+    
+    await notificationsPlugin.initialize(initializationSettings);
+    
+    await notificationsPlugin
+        .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+  }
+
+  void loadRecentReadings() async {
+    final readings = await DatabaseHelper.instance.getRecentReadings(10);
+    setState(() {
+      recentReadings = readings;
+    });
+  }
+
+  void connectToDevice() async {
+    try {
+      await widget.device.connect(timeout: const Duration(seconds: 10));
+      
+      setState(() {
+        isConnected = true;
+        isConnecting = false;
+        statusMessage = 'Connected! Discovering services...';
+      });
+
+      List<BluetoothService> services = await widget.device.discoverServices();
+
+      bool foundCharacteristic = false;
+      for (var service in services) {
+        for (var characteristic in service.characteristics) {
+          if (characteristic.properties.notify || characteristic.properties.read) {
+            targetCharacteristic = characteristic;
+            foundCharacteristic = true;
+            
+            await characteristic.setNotifyValue(true);
+            
+            characteristicSubscription = characteristic.lastValueStream.listen((value) {
+              if (value.isNotEmpty) {
+                String dataString = utf8.decode(value);
+                parseData(dataString);
+              }
+            });
+            
+            setState(() {
+              statusMessage = 'Receiving data';
+            });
+            
+            break;
+          }
+        }
+        if (foundCharacteristic) break;
+      }
+    } catch (e) {
+      setState(() {
+        isConnecting = false;
+        isConnected = false;
+        statusMessage = 'Connection failed: $e';
+      });
+    }
+  }
+
+  Future<void> showTremorNotification(TremorAnalysis analysis) async {
+    if (!alertsEnabled) return;
+    
+    const androidDetails = AndroidNotificationDetails(
+      'tremor_channel',
+      'Tremor Alerts',
+      channelDescription: 'Notifications for detected tremors',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await notificationsPlugin.show(
+      0,
+      '⚠️ Tremor Detected',
+      '${analysis.severity} tremor at ${analysis.dominantFrequency.toStringAsFixed(1)} Hz',
+      notificationDetails,
+    );
+  }
+  
+  void parseData(String data) async {
+    try {
+      List<String> values = data.trim().split(',');
+      if (values.length >= 3) {
+        double x = double.tryParse(values[0].trim()) ?? 0;
+        double y = double.tryParse(values[1].trim()) ?? 0;
+        double z = double.tryParse(values[2].trim()) ?? 0;
+        
+        double mag = sqrt(x * x + y * y + z * z);
+        
+        tremorDetector.addDataPoint(x, y, z);
+        
+        // ML Detection (runs in background, no UI)
+        mlWindow.add(mag);
+        if (mlWindow.length > 50) {
+          mlWindow.removeAt(0);
+        }
+
+        if (mlWindow.length >= 20) {
+          mlConfirmsTremor = mlDetector.detectTremor(mlWindow);
+        }
+        
+        TremorAnalysis? analysis = tremorDetector.analyzeWindow();
+
+        if (analysis != null) {
+          lastAnalysis = analysis;
+          
+          // Both detectors must agree for tremor confirmation
+          if (analysis.isTremor && mlConfirmsTremor && !currentlyInTremor) {
+            currentlyInTremor = true;
+            tremorStartTime = DateTime.now();
+            
+            await showTremorNotification(analysis);
+            
+            setState(() {
+              tremorCountToday++;
+            });
+          } else if (!analysis.isTremor && currentlyInTremor) {
+            currentlyInTremor = false;
+            
+            if (tremorStartTime != null) {
+              double duration = DateTime.now().difference(tremorStartTime!).inSeconds.toDouble();
+              
+              final event = TremorEvent(
+                timestamp: tremorStartTime!,
+                magnitude: lastAnalysis!.power,
+                duration: duration,
+                severity: lastAnalysis!.severity,
+              );
+              
+              await DatabaseHelper.instance.insertTremorEvent(event);
+            }
+            
+            tremorStartTime = null;
+          }
+        }
+        
+        setState(() {
+          xValue = x;
+          yValue = y;
+          zValue = z;
+          magnitude = mag;
+          
+          timeCounter += 0.1;
+          xDataPoints.add(FlSpot(timeCounter, x));
+          yDataPoints.add(FlSpot(timeCounter, y));
+          zDataPoints.add(FlSpot(timeCounter, z));
+          
+          if (xDataPoints.length > maxDisplayPoints) {
+            xDataPoints.removeAt(0);
+            yDataPoints.removeAt(0);
+            zDataPoints.removeAt(0);
+          }
+        });
+        
+        final reading = AccelerometerReading(
+          x: x,
+          y: y,
+          z: z,
+          timestamp: DateTime.now(),
+          magnitude: mag,
+        );
+        
+        await DatabaseHelper.instance.insertReading(reading);
+        loadRecentReadings();
+      }
+    } catch (e) {
+      // Handle parsing error
+    }
+  }
+
+  @override
+  void dispose() {
+    characteristicSubscription?.cancel();
+    widget.device.disconnect();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.device.platformName.isEmpty ? 'Device' : widget.device.platformName),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.timeline),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const TremorHistoryScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
+              loadSettings();
+            },
+          ),
+          Container(
+            margin: const EdgeInsets.only(right: 16),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: isConnected ? Colors.green.shade100 : Colors.red.shade100,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isConnected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+                  color: isConnected ? Colors.green : Colors.red,
+                  size: 20,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  isConnected ? 'Connected' : 'Disconnected',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: isConnected ? Colors.green.shade900 : Colors.red.shade900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Tremor Alert Banner
+              if (currentlyInTremor)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.red.shade400, Colors.red.shade600],
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.red.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 40),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '⚠️ TREMOR DETECTED',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            if (lastAnalysis != null)
+                              Text(
+                                '${lastAnalysis!.severity} • ${lastAnalysis!.dominantFrequency.toStringAsFixed(1)} Hz',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.white,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              
+              // Today's Stats
+              Card(
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildQuickStat(
+                        'Tremors Today',
+                        '$tremorCountToday',
+                        Icons.event_note,
+                        Colors.blue,
+                      ),
+                      Container(width: 1, height: 40, color: Colors.grey.shade300),
+                      _buildQuickStat(
+                        'Status',
+                        currentlyInTremor ? 'Active' : 'Normal',
+                        currentlyInTremor ? Icons.warning : Icons.check_circle,
+                        currentlyInTremor ? Colors.red : Colors.green,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Current Reading
+              Card(
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Current Reading',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          DataColumn(label: 'X', value: xValue.toStringAsFixed(2), color: Colors.red),
+                          DataColumn(label: 'Y', value: yValue.toStringAsFixed(2), color: Colors.green),
+                          DataColumn(label: 'Z', value: zValue.toStringAsFixed(2), color: Colors.blue),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text(
+                              'Magnitude: ',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                            Text(
+                              magnitude.toStringAsFixed(3),
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Live Graph
+              Card(
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Live Data Stream',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        height: 200,
+                        child: xDataPoints.isEmpty
+                            ? const Center(child: Text('Waiting for data...'))
+                            : LineChart(
+                                LineChartData(
+                                  gridData: const FlGridData(show: true),
+                                  titlesData: FlTitlesData(
+                                    leftTitles: AxisTitles(
+                                      sideTitles: SideTitles(
+                                        showTitles: true,
+                                        reservedSize: 40,
+                                      ),
+                                    ),
+                                    bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                                  ),
+                                  borderData: FlBorderData(show: true),
+                                  lineBarsData: [
+                                    LineChartBarData(
+                                      spots: xDataPoints,
+                                      isCurved: true,
+                                      color: Colors.red,
+                                      dotData: const FlDotData(show: false),
+                                      belowBarData: BarAreaData(show: false),
+                                      barWidth: 2,
+                                    ),
+                                    LineChartBarData(
+                                      spots: yDataPoints,
+                                      isCurved: true,
+                                      color: Colors.green,
+                                      dotData: const FlDotData(show: false),
+                                      belowBarData: BarAreaData(show: false),
+                                      barWidth: 2,
+                                    ),
+                                    LineChartBarData(
+                                      spots: zDataPoints,
+                                      isCurved: true,
+                                      color: Colors.blue,
+                                      dotData: const FlDotData(show: false),
+                                      belowBarData: BarAreaData(show: false),
+                                      barWidth: 2,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildLegendItem('X', Colors.red),
+                          const SizedBox(width: 16),
+                          _buildLegendItem('Y', Colors.green),
+                          const SizedBox(width: 16),
+                          _buildLegendItem('Z', Colors.blue),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Detection Info
+              if (lastAnalysis != null && !currentlyInTremor)
+                Card(
+                  color: Colors.green.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        Icon(Icons.check_circle, color: Colors.green.shade700, size: 32),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Monitoring Active',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Frequency: ${lastAnalysis!.dominantFrequency.toStringAsFixed(1)} Hz',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickStat(String label, String value, IconData icon, Color color) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 32),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            color: Colors.grey,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLegendItem(String label, Color color) {
+    return Row(
+      children: [
+        Container(width: 16, height: 3, color: color),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+}
+
+class DataColumn extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const DataColumn({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 16,
+            color: color,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 32,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class HistoryScreen extends StatefulWidget {
+  const HistoryScreen({super.key});
+
+  @override
+  State<HistoryScreen> createState() => _HistoryScreenState();
+}
+
+class _HistoryScreenState extends State<HistoryScreen> {
+  List<AccelerometerReading> allReadings = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadAllReadings();
+  }
+
+  void loadAllReadings() async {
+    final readings = await DatabaseHelper.instance.getAllReadings();
+    setState(() {
+      allReadings = readings;
+      isLoading = false;
+    });
+  }
+
+  Future<void> exportToCSV() async {
+    final readings = await DatabaseHelper.instance.getAllReadings();
+    
+    StringBuffer csv = StringBuffer();
+    csv.writeln('timestamp,x,y,z,magnitude');
+    
+    for (var reading in readings) {
+      csv.writeln(
+        '${reading.timestamp.toIso8601String()},'
+        '${reading.x},'
+        '${reading.y},'
+        '${reading.z},'
+        '${reading.magnitude}'
+      );
+    }
+    
+    print('=== CSV DATA START ===');
+    print(csv.toString());
+    print('=== CSV DATA END ===');
+    print('Total readings: ${readings.length}');
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported ${readings.length} readings to console')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('All Readings'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download),
+            onPressed: exportToCSV,
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_forever),
+            onPressed: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Clear All Readings?'),
+                  content: const Text(
+                    'This will delete all accelerometer readings. This cannot be undone.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              );
+              
+              if (confirm == true) {
+                await DatabaseHelper.instance.deleteAllReadings();
+                loadAllReadings();
+              }
+            },
+          ),
+        ],
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : allReadings.isEmpty
+              ? const Center(child: Text('No readings saved yet'))
+              : ListView.builder(
+                  itemCount: allReadings.length,
+                  itemBuilder: (context, index) {
+                    final reading = allReadings[index];
+                    return ListTile(
+                      title: Text(DateFormat('MMM dd, yyyy HH:mm:ss').format(reading.timestamp)),
+                      subtitle: Text(
+                        'X: ${reading.x.toStringAsFixed(2)}, '
+                        'Y: ${reading.y.toStringAsFixed(2)}, '
+                        'Z: ${reading.z.toStringAsFixed(2)}',
+                      ),
+                      trailing: Text(
+                        reading.magnitude.toStringAsFixed(2),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    );
+                  },
+                ),
+    );
+  }
+}
+
+/*import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
+import 'dart:convert';
+import 'dart:async';
+import 'dart:math';
+import 'database_helper.dart';
+import 'tremor_detector.dart';
+import 'tremor_event.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'settings_screen.dart';
+import 'tremor_history_screen.dart';
 
 void main() {
   runApp(const TremorDetectionApp());
@@ -1343,7 +2607,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ),
     );
   }
-}
+}*/
 
 
 /*import 'package:flutter/material.dart';
